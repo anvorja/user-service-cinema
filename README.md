@@ -31,12 +31,21 @@ Todos los endpoints bajo `/api/v1/users` requieren JWT (`Authorization: Bearer`)
 | PUT | `/me/password` | Cambiar contraseña — delega en `auth-service` vía HTTP, no valida ni almacena nada aquí |
 | GET | `/me/purchases` | Historial de compras (vía HTTP interno a `booking-service`, ver Dependencias) |
 
+Además, bajo `/api/v1/users/internal` expone rutas para `admin-service`, protegidas por `X-Internal-Token` (no JWT de usuario final):
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/internal` | Lista/busca usuarios (`skip`, `limit`, `include_inactive`, `search`) |
+| GET | `/internal/lookup?email=` | Resuelve email → perfil completo — usado por `admin-service` para autenticación/autorización del panel |
+| GET | `/internal/{user_id}` | Detalle de un usuario |
+| PATCH | `/internal/{user_id}/toggle` | Activa/desactiva un usuario — publica `user.deactivated` solo al desactivar |
+
 ## Eventos Kafka
 
 Ver `../kafka-schemas-cinema/event_contracts_operativos.md` para los contratos completos.
 
 - **Consume** `user.registered` (de `auth-service`) → crea o actualiza el perfil en `cinema_users` (idempotente, `ON CONFLICT DO UPDATE`).
-- **Publica** `user.deactivated` (al hacer `DELETE /me`) → `auth-service` lo consume para bloquear futuros logins en `cinema_auth`.
+- **Publica** `user.deactivated` (al hacer `DELETE /me`, o al desactivar a alguien vía `PATCH /internal/{user_id}/toggle` desde `admin-service`) → `auth-service` lo consume para bloquear futuros logins en `cinema_auth`.
 
 Ninguno de los dos está detallado como sección propia en `event_contracts_operativos.md` (solo en su tabla de schemas) — son eventos simples de ciclo de vida de usuario, sin la complejidad de la saga de compra.
 
@@ -48,6 +57,7 @@ Ninguno de los dos está detallado como sección propia en `event_contracts_oper
 | `JWT_SECRET` / `JWT_ALGORITHM` | Deben coincidir con `auth-service` — este servicio valida tokens localmente, no llama a `/verify-token` |
 | `AUTH_SERVICE_URL` | URL de `auth-service`, usada solo por `PUT /me/password` (delega el cambio de contraseña) |
 | `BOOKING_SERVICE_URL` | URL de `booking-service`, usada por `GET /me/purchases` (default local: `http://booking-service:8004`) |
+| `INTERNAL_SERVICE_TOKEN` | Header `X-Internal-Token`: lo envía al llamar a `booking-service`, y lo exige en sus propias rutas `/internal/*` (llamadas por `admin-service`) |
 | `REDIS_URL` | Cliente Redis disponible; no es requisito duro del arranque |
 | `KAFKA_ENABLED` / `KAFKA_BOOTSTRAP_SERVERS` / `KAFKA_API_KEY` / `KAFKA_API_SECRET` | Confluent Cloud — ver `../IMPLEMENTATION-GUIDE.md` Fase 3 |
 | `BACKEND_CORS_ORIGINS` | Orígenes permitidos, admite lista JSON o CSV |
@@ -57,7 +67,8 @@ Ninguno de los dos está detallado como sección propia en `event_contracts_oper
 ## Dependencias
 
 - **auth-service** — única llamada HTTP saliente (`PUT /api/v1/auth/password`), y origen del evento `user.registered`.
-- **booking-service** — llamada HTTP saliente para `GET /me/purchases` (`GET /api/v1/purchases/internal/users/{id}/purchases`, interno, sin auth — protegido a nivel de red). Antes de 2026-09-19 este servicio leía `cinema_booking` directamente; ver `../ARCHITECTURE.md` ("Aislamiento de base de datos por servicio") para el porqué del cambio.
+- **booking-service** — llamada HTTP saliente para `GET /me/purchases` (`GET /api/v1/purchases/internal/users/{id}/purchases`, protegida por `X-Internal-Token`). Antes de 2026-09-19 este servicio leía `cinema_booking` directamente; ver `../ARCHITECTURE.md` ("Aislamiento de base de datos por servicio") para el porqué del cambio.
+- **admin-service** — nos llama (`GET/PATCH /internal/*`) para resolver auth/autorización del panel y su CRUD de usuarios. Antes de 2026-09-19 `admin-service` leía `cinema_users` directamente.
 - **Confluent Cloud** — productor y consumidor Kafka.
 
 ## Correr en local

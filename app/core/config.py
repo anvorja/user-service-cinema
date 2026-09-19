@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     AUTH_SERVICE_URL: str
     BOOKING_SERVICE_URL: str = "http://booking-service:8004"
 
+    # Secreto compartido para rutas /internal/* (propias y de otros
+    # servicios) — ver ARCHITECTURE.md, "Aislamiento de base de datos por
+    # servicio". Debe coincidir con el mismo valor en booking-service (lo
+    # llamamos) y admin-service (nos llama).
+    INTERNAL_SERVICE_TOKEN: str = ""
+
     # Kafka — consume user.registered para poblar perfiles
     KAFKA_ENABLED: bool = False
     KAFKA_BOOTSTRAP_SERVERS: str = ""

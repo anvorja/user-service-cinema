@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.api.dependencies import get_current_user, get_current_token
+from app.api.dependencies import get_current_user, get_current_token, verify_internal_token
 from app.models.user import User
 from app.schemas.user import UserProfileResponse, UserUpdate, MyPurchaseResponse
 from app.services.user_service import UserService
@@ -97,6 +97,7 @@ async def get_my_purchases(
             resp = await client.get(
                 f"{settings.BOOKING_SERVICE_URL}/api/v1/purchases/internal/users/{current_user.id}/purchases",
                 params=params,
+                headers={"X-Internal-Token": settings.INTERNAL_SERVICE_TOKEN},
             )
         except httpx.TransportError:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "booking-service no disponible")
@@ -105,3 +106,53 @@ async def get_my_purchases(
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Error al consultar el historial de compras")
 
     return [MyPurchaseResponse(**item) for item in resp.json()]
+
+
+# ── Internas, para admin-service (ver ARCHITECTURE.md, "Aislamiento de ────────
+# base de datos por servicio", caso 2). Protegidas por X-Internal-Token, no
+# por JWT de usuario final — admin-service ya validó al admin autenticado.
+# El orden de declaración importa: /internal/lookup debe ir antes que
+# /internal/{user_id} para que no lo capture como user_id="lookup".
+
+@router.get("/internal", response_model=List[UserProfileResponse], dependencies=[Depends(verify_internal_token)])
+async def list_users_internal(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    include_inactive: bool = Query(False),
+    search: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    users = UserService.list_users(db, skip, limit, include_inactive, search)
+    return [UserProfileResponse.from_orm(u) for u in users]
+
+
+@router.get("/internal/lookup", response_model=UserProfileResponse, dependencies=[Depends(verify_internal_token)])
+async def get_user_by_email_internal(
+    email: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Resuelve email → perfil completo. Usado por admin-service para autenticación/autorización."""
+    user = UserService.get_by_email(db, email)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuario no encontrado")
+    return UserProfileResponse.from_orm(user)
+
+
+@router.get("/internal/{user_id}", response_model=UserProfileResponse, dependencies=[Depends(verify_internal_token)])
+async def get_user_internal(
+    user_id: int,
+    db: Session = Depends(get_db),
+):
+    user = UserService.get_profile(db, user_id)
+    return UserProfileResponse.from_orm(user)
+
+
+@router.patch("/internal/{user_id}/toggle", response_model=UserProfileResponse, dependencies=[Depends(verify_internal_token)])
+async def toggle_user_internal(
+    user_id: int,
+    db: Session = Depends(get_db),
+):
+    user = await UserService.toggle_status(db, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuario no encontrado")
+    return UserProfileResponse.from_orm(user)
