@@ -22,35 +22,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# ── cinema_booking (read-only: purchases, tickets) ────────────────────────────
-
-def _make_booking_engine():
-    url = settings.BOOKING_DATABASE_URL
-    if not url:
-        return None
-    return create_engine(
-        url,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        pool_size=2,
-        max_overflow=3,
-        pool_timeout=30,
-        echo=settings.DEBUG,
-    )
-
-
-_booking_engine = _make_booking_engine()
-BookingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_booking_engine) if _booking_engine else None
-
-
-def get_booking_db():
-    if BookingSessionLocal is None:
-        from fastapi import HTTPException, status
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Booking DB no configurada")
-    db = BookingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()

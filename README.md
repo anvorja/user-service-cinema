@@ -8,7 +8,10 @@ Este servicio posee `cinema_users.users` — el perfil (nombre, teléfono, rol) 
 
 El perfil se crea/actualiza de forma reactiva: no hay endpoint de registro propio, se puebla al escuchar `user.registered` publicado por `auth-service`. Esto mantiene una única fuente de verdad para el alta de usuarios.
 
-También expone el historial de compras del usuario, leyendo directamente `cinema_booking` (propiedad de `booking-service-cinema`) en modo **solo lectura** — no crea tablas ni escribe ahí.
+También expone el historial de compras del usuario. Hasta 2026-09-19 lo hacía
+leyendo directamente `cinema_booking` (propiedad de `booking-service-cinema`)
+en modo solo lectura; ahora delega en `booking-service` vía HTTP interno — ver
+"Aislamiento de base de datos por servicio" en `../ARCHITECTURE.md`.
 
 ## Stack
 
@@ -26,7 +29,7 @@ Todos los endpoints bajo `/api/v1/users` requieren JWT (`Authorization: Bearer`)
 | PUT | `/me` | Actualizar nombre, apellido o teléfono |
 | DELETE | `/me` | Soft-delete del perfil + publica `user.deactivated` |
 | PUT | `/me/password` | Cambiar contraseña — delega en `auth-service` vía HTTP, no valida ni almacena nada aquí |
-| GET | `/me/purchases` | Historial de compras (lee `cinema_booking`, solo lectura) |
+| GET | `/me/purchases` | Historial de compras (vía HTTP interno a `booking-service`, ver Dependencias) |
 
 ## Eventos Kafka
 
@@ -42,19 +45,19 @@ Ninguno de los dos está detallado como sección propia en `event_contracts_oper
 | Variable | Para qué sirve |
 |---|---|
 | `DATABASE_URL` | Conexión a `cinema_users`, propia de este servicio |
-| `BOOKING_DATABASE_URL` | Conexión de solo lectura a `cinema_booking`, para `GET /me/purchases` |
 | `JWT_SECRET` / `JWT_ALGORITHM` | Deben coincidir con `auth-service` — este servicio valida tokens localmente, no llama a `/verify-token` |
 | `AUTH_SERVICE_URL` | URL de `auth-service`, usada solo por `PUT /me/password` (delega el cambio de contraseña) |
+| `BOOKING_SERVICE_URL` | URL de `booking-service`, usada por `GET /me/purchases` (default local: `http://booking-service:8004`) |
 | `REDIS_URL` | Cliente Redis disponible; no es requisito duro del arranque |
 | `KAFKA_ENABLED` / `KAFKA_BOOTSTRAP_SERVERS` / `KAFKA_API_KEY` / `KAFKA_API_SECRET` | Confluent Cloud — ver `../IMPLEMENTATION-GUIDE.md` Fase 3 |
 | `BACKEND_CORS_ORIGINS` | Orígenes permitidos, admite lista JSON o CSV |
 
-`AUTH_SERVICE_URL` es un campo requerido (sin default) — si queda vacío el servicio arranca pero `PUT /me/password` falla en runtime. En local debe apuntar a `http://auth-service:8005` (corregido 2026-09-18, ver `../IMPLEMENTATION-GUIDE.md` Fase 0).
+`AUTH_SERVICE_URL` es un campo requerido (sin default) — si queda vacío el servicio arranca pero `PUT /me/password` falla en runtime. En local debe apuntar a `http://auth-service:8005` (corregido 2026-09-18, ver `../IMPLEMENTATION-GUIDE.md` Fase 0). `BOOKING_SERVICE_URL` sí trae default para local (`http://booking-service:8004`); en producción hay que fijarlo a mano al `.env.production` y al dashboard de Render (URL pública de `booking-service-cinema`), si no `GET /me/purchases` responde `502`.
 
 ## Dependencias
 
 - **auth-service** — única llamada HTTP saliente (`PUT /api/v1/auth/password`), y origen del evento `user.registered`.
-- **cinema_booking** — leída directamente (no vía API de `booking-service`), acoplamiento de datos compartido documentado en `db_asuntos/docDBcambios.md`.
+- **booking-service** — llamada HTTP saliente para `GET /me/purchases` (`GET /api/v1/purchases/internal/users/{id}/purchases`, interno, sin auth — protegido a nivel de red). Antes de 2026-09-19 este servicio leía `cinema_booking` directamente; ver `../ARCHITECTURE.md` ("Aislamiento de base de datos por servicio") para el porqué del cambio.
 - **Confluent Cloud** — productor y consumidor Kafka.
 
 ## Correr en local

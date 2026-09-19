@@ -9,11 +9,11 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
 
     DATABASE_URL: str
-    BOOKING_DATABASE_URL: str = ""
     JWT_SECRET: str
     JWT_ALGORITHM: str = "HS256"
     REDIS_URL: str = ""
     AUTH_SERVICE_URL: str
+    BOOKING_SERVICE_URL: str = "http://booking-service:8004"
 
     # Kafka — consume user.registered para poblar perfiles
     KAFKA_ENABLED: bool = False

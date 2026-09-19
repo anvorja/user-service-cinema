@@ -4,14 +4,12 @@ from typing import List
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import get_db, get_booking_db
+from app.core.database import get_db
 from app.api.dependencies import get_current_user, get_current_token
 from app.models.user import User
-from app.models.purchase import Purchase
-from app.models.movie import Movie
 from app.schemas.user import UserProfileResponse, UserUpdate, MyPurchaseResponse
 from app.services.user_service import UserService
 
@@ -83,18 +81,27 @@ async def get_my_purchases(
     limit: int = Query(20, ge=1, le=100),
     purchase_status: str = Query(None, alias="status"),
     current_user: User = Depends(get_current_user),
-    booking_db: Session = Depends(get_booking_db),
 ):
-    """Historial de compras del usuario autenticado (lee cinema_booking)."""
-    q = (
-        booking_db.query(Purchase)
-        .options(
-            selectinload(Purchase.tickets),
-            selectinload(Purchase.movie),
-        )
-        .filter(Purchase.user_id == current_user.id)
-    )
+    """
+    Historial de compras del usuario autenticado.
+    Delega en booking-service (dueño de cinema_booking) vía HTTP interno —
+    este servicio ya no lee esa base directamente (ver ARCHITECTURE.md,
+    "Aislamiento de base de datos por servicio").
+    """
+    params = {"skip": skip, "limit": limit}
     if purchase_status:
-        q = q.filter(Purchase.status == purchase_status)
-    purchases = q.order_by(Purchase.id.desc()).offset(skip).limit(limit).all()
-    return [MyPurchaseResponse.from_orm(p) for p in purchases]
+        params["status"] = purchase_status
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(
+                f"{settings.BOOKING_SERVICE_URL}/api/v1/purchases/internal/users/{current_user.id}/purchases",
+                params=params,
+            )
+        except httpx.TransportError:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "booking-service no disponible")
+
+    if resp.status_code != status.HTTP_200_OK:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Error al consultar el historial de compras")
+
+    return [MyPurchaseResponse(**item) for item in resp.json()]
