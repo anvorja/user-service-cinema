@@ -7,6 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -59,6 +60,9 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+# Métricas de Prometheus (latencia/conteo por endpoint) en /metrics
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
